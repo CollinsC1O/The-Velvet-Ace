@@ -232,11 +232,13 @@ pub impl HandImpl of HandTrait {
     ) {
         if hands_changed {
             assert(winning_hands.len() == winning_players.len(), 'HandImpl panicked.');
-            for _ in 0..winning_hands.len() {
-                // discard all existing objects in `winning_hands`. A clean slate.
-                winning_hands.pop_front().unwrap();
-                winning_players.pop_front().unwrap().unwrap();
-            };
+            for _ in 0
+                ..winning_hands
+                    .len() {
+                        // discard all existing objects in `winning_hands`. A clean slate.
+                        winning_hands.pop_front().unwrap();
+                        winning_players.pop_front().unwrap().unwrap();
+                    };
         }
     }
 
@@ -256,26 +258,56 @@ pub impl HandImpl of HandTrait {
 pub impl GameImpl of GameTrait {
     fn initialize_game(player: Option<Player>, game_params: Option<GameParams>, id: u64) -> Game {
         let mut game: Game = Default::default();
-        match game_params {
-            Option::Some(params) => params,
-            _ => Self::get_default_game_params(),
+
+        // Set game parameters (either custom or default)
+        let params = match game_params {
+            Option::Some(params) => {
+                // Validate custom params
+                assert(params.max_no_of_players > 1, GameErrors::MIN_PLAYER);
+                assert(params.big_blind > params.small_blind, GameErrors::INVALID_BLIND_PLAYER);
+                params
+            },
+            Option::None => Self::get_default_game_params()
+        };
+
+        let mut deck = Deck { game_id: id.into(), cards: array![] };
+        deck = DeckTrait::new_deck(ref deck, id.into());
+        DeckTrait::shuffle(ref deck);
+
+        let mut players: Array<Option<Player>> = array![];
+        let mut community_cards: Array<Card> = array![];
+
+        // Add initial player only if provided
+        if let Option::Some(mut initial_player) = player {
+            // Ensure player has enough chips for the game
+            assert(
+                initial_player.chips >= (params.big_blind * 20).into(),
+                GameErrors::INSUFFICIENT_CHIP
+            );
+
+            // Set initial player as dealer
+            initial_player.is_dealer = true;
+
+            // Lock player to this game
+            initial_player.locked = (true, id);
+
+            players.append(Option::Some(initial_player));
         }
 
-        // pub struct Game {
-        //     #[key]
-        //     id: u64,
-        //     in_progress: bool,
-        //     has_ended: bool,
-        //     current_round: u8,
-        //     round_in_progress: bool,
-        //     players: Array<Option<Player>>,
-        //     deck: Deck,
-        //     next_player: Option<Player>,
-        //     community_cards: Array<Card>,
-        //     pot: u256,
-        //     params: GameParams
-        // }
-        game
+        // Create game instance
+        Game {
+            id,
+            in_progress: false,
+            has_ended: false,
+            current_round: 0,
+            round_in_progress: false,
+            players,
+            deck,
+            next_player: Option::None,
+            community_cards,
+            pot: 0,
+            params,
+        }
     }
 
     fn get_default_game_params() -> GameParams {
@@ -305,12 +337,14 @@ fn generate_random(span: u32) -> u32 {
 pub impl DeckImpl of DeckTrait<Deck> {
     fn new_deck(ref self: Deck, game_id: felt252) -> Deck {
         let mut cards: Array<Card> = array![];
-        for suit in 0_u8..4_u8 {
-            for value in 1_u16..14_u16 {
-                let card: Card = Card { suit, value };
-                cards.append(card);
+        for suit in 0_u8
+            ..4_u8 {
+                for value in 1_u16
+                    ..14_u16 {
+                        let card: Card = Card { suit, value };
+                        cards.append(card);
+                    };
             };
-        };
 
         Deck { game_id, cards }
     }
@@ -319,15 +353,16 @@ pub impl DeckImpl of DeckTrait<Deck> {
         let mut cards: Array<Card> = self.cards;
         let mut new_cards: Array<Card> = array![];
         let mut verifier: Felt252Dict<bool> = Default::default();
-        for _ in cards.len()..0 {
-            let mut rand = generate_random(DEFAULT_DECK_LENGTH);
-            while !verifier.get(rand.into()) {
-                rand = generate_random(DEFAULT_DECK_LENGTH);
+        for _ in cards.len()
+            ..0 {
+                let mut rand = generate_random(DEFAULT_DECK_LENGTH);
+                while !verifier.get(rand.into()) {
+                    rand = generate_random(DEFAULT_DECK_LENGTH);
+                };
+                let temp: Card = *cards.at(rand);
+                new_cards.append(temp);
+                verifier.insert(rand.into(), true);
             };
-            let temp: Card = *cards.at(rand);
-            new_cards.append(temp);
-            verifier.insert(rand.into(), true);
-        };
 
         self.cards = new_cards.clone();
         // deck
@@ -350,6 +385,9 @@ pub mod GameErrors {
     pub const PLAYER_NOT_IN_GAME: felt252 = 'PLAYER NOT IN GAME';
     pub const PLAYER_ALREADY_IN_GAME: felt252 = 'PLAYER ALREADY IN GAME';
     pub const PLAYER_OUT_OF_CHIPS: felt252 = 'PLAYER OUT OF CHIPS';
+    pub const MIN_PLAYER: felt252 = 'Min 2 players required';
+    pub const INVALID_BLIND_PLAYER: felt252 = 'Invalid blind values';
+    pub const INSUFFICIENT_CHIP: felt252 = 'Insufficient chips';
 }
 // assert after shuffling, that all cards remain distinct, and the deck is still 52 cards
 // #[derive(Serde, Copy, Drop, Introspect, PartialEq, Debug)]
